@@ -9,7 +9,7 @@ import { vehicleStreamService } from '../services/stream.service';
 const NearbyQuerySchema = z.object({
   lat: z.coerce.number().min(-90).max(90, 'Latitude must be between -90 and 90'),
   lon: z.coerce.number().min(-180).max(180, 'Longitude must be between -180 and 180'),
-  radius: z.coerce.number().min(0.1).max(20.0, 'Radius must be between 0.1 and 20 km').default(2.0),
+  radius: z.coerce.number().min(0.1).max(50.0, 'Radius must be between 0.1 and 50 km').default(10.0),
   agency: z.enum(['DTC', 'DIMTS']).optional(),
   electric: z
     .enum(['true', 'false'])
@@ -19,7 +19,7 @@ const NearbyQuerySchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((val) => (val !== undefined ? val === 'true' : undefined)),
-  limit: z.coerce.number().int().min(1).max(100).default(30),
+  limit: z.coerce.number().int().min(1).max(300).default(50),
 });
 
 export async function busRoutes(fastify: FastifyInstance, _opts: FastifyPluginOptions) {

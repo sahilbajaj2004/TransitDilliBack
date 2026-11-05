@@ -7,7 +7,7 @@ import { EtaService } from '../services/eta.service';
 const NearbyStopsQuerySchema = z.object({
   lat: z.coerce.number().min(-90).max(90),
   lon: z.coerce.number().min(-180).max(180),
-  radius: z.coerce.number().min(0.1).max(10.0).default(1.5),
+  radius: z.coerce.number().min(0.1).max(30.0).default(5.0),
 });
 
 export async function transitRoutes(fastify: FastifyInstance, _opts: FastifyPluginOptions) {
