@@ -1,0 +1,90 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ----------------------------------------------------
+// 1. User & Authentication Models (Phase 1)
+// ----------------------------------------------------
+model User {
+  id            String         @id @default(uuid())
+  googleId      String         @unique
+  email         String         @unique
+  name          String
+  phone         String?
+  avatarUrl     String?
+  isVerified    Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  savedStops    SavedStop[]
+  savedRoutes   SavedRoute[]
+
+  @@map("users")
+}
+
+model SavedStop {
+  id        String   @id @default(uuid())
+  userId    String
+  stopId    String
+  stopName  String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, stopId])
+  @@map("saved_stops")
+}
+
+model SavedRoute {
+  id        String   @id @default(uuid())
+  userId    String
+  routeId   String
+  routeName String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, routeId])
+  @@map("saved_routes")
+}
+
+// ----------------------------------------------------
+// 2. Static Bus & Route Network Models (Phase 2 & 3)
+// ----------------------------------------------------
+model Route {
+  id          String      @id // e.g. "534UP", "TMS+"
+  shortName   String      // e.g. "534"
+  longName    String      // e.g. "Mehrauli Terminal to Nehru Place Terminal"
+  agency      String      // "DTC" | "DIMTS"
+  isAc        Boolean     @default(false)
+  isElectric  Boolean     @default(false)
+  polyline    String?     // Encoded polyline or JSON string of coordinates
+  stops       RouteStop[]
+
+  @@map("routes")
+}
+
+model Stop {
+  id          String      @id // e.g. "AIIMS_01"
+  name        String      // e.g. "AIIMS Hospital Ring Road"
+  code        String?     // Stop code or bay number
+  lat         Float
+  lon         Float
+  routes      RouteStop[]
+
+  @@map("stops")
+}
+
+model RouteStop {
+  id          String   @id @default(uuid())
+  routeId     String
+  stopId      String
+  sequence    Int      // 1, 2, 3... stop order along route
+  route       Route    @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  stop        Stop     @relation(fields: [stopId], references: [id], onDelete: Cascade)
+
+  @@unique([routeId, sequence])
+  @@map("route_stops")
+}
