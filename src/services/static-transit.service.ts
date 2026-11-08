@@ -395,14 +395,24 @@ export class StaticTransitService {
 
     // Fallback: Check nearby transit network stops in Delhi to find the road orientation!
     if (this.stopSpatialIndex) {
-      const nearbyStopIndices = this.stopSpatialIndex.within(lon, lat, 0.006); // ~600m
-      if (nearbyStopIndices.length >= 2) {
-        const s1 = this.stopsList[nearbyStopIndices[0]];
-        const s2 = this.stopsList[nearbyStopIndices[1]];
-        if (s1 && s2) {
-          const b = this.calculateBearing(s1.lat, s1.lon, s2.lat, s2.lon);
-          if (b > 0) return b;
+      try {
+        const delta = 0.006; // ~600m
+        const nearbyStopIndices = this.stopSpatialIndex.range(
+          lon - delta,
+          lat - delta,
+          lon + delta,
+          lat + delta
+        );
+        if (nearbyStopIndices && nearbyStopIndices.length >= 2) {
+          const s1 = this.stopsList[nearbyStopIndices[0]];
+          const s2 = this.stopsList[nearbyStopIndices[1]];
+          if (s1 && s2) {
+            const b = this.calculateBearing(s1.lat, s1.lon, s2.lat, s2.lon);
+            if (b > 0) return b;
+          }
         }
+      } catch {
+        // Continue if spatial query fails
       }
     }
 
@@ -490,6 +500,91 @@ export class StaticTransitService {
     }
 
     return results;
+  }
+
+  /**
+   * Dynamic prefix & corridor route auto-complete (e.g. "9" -> 901, 913, 971, 971A; "33" -> 33, 33A, 334).
+   * Groups by shortName and provides human-readable Origin ➔ Destination.
+   */
+  public getRouteSuggestions(query: string, limit = 12): Array<{
+    shortName: string;
+    longName: string;
+    origin: string;
+    destination: string;
+    agency: string;
+    directionCount: number;
+    label: string;
+  }> {
+    const q = (query || '').trim().toUpperCase();
+    if (!q) {
+      // Default top Delhi popular routes when query is empty
+      const popular = ['33', '502', 'TMS', 'OMS', '227A', '971', '913', '729', '419', '534', '100A', '73'];
+      const results: any[] = [];
+      const seen = new Set<string>();
+      for (const code of popular) {
+        const found = this.uniqueRoutes.find((r) => r.shortName.toUpperCase() === code);
+        if (found && !seen.has(found.shortName)) {
+          seen.add(found.shortName);
+          results.push({
+            shortName: found.shortName,
+            longName: found.longName,
+            origin: found.startingStop || 'Terminal',
+            destination: found.terminalStop || 'Corridor',
+            agency: found.agency || 'DTC',
+            directionCount: 2,
+            label: `${found.shortName} (${found.startingStop} ➔ ${found.terminalStop})`,
+          });
+        }
+      }
+      return results.slice(0, limit);
+    }
+
+    // Map to group by shortName
+    const candidateMap = new Map<string, { route: TransitRoute; score: number; count: number }>();
+
+    for (const r of this.uniqueRoutes) {
+      const s = r.shortName.toUpperCase().trim();
+      const orig = (r.startingStop || '').toUpperCase();
+      const dest = (r.terminalStop || '').toUpperCase();
+
+      let score = -1;
+      if (s === q) {
+        score = 100; // Exact match
+      } else if (s.startsWith(q)) {
+        score = 80 - s.length; // Starts with query (shorter is higher priority)
+      } else if (s.includes(q)) {
+        score = 60 - s.length;
+      } else if (orig.includes(q) || dest.includes(q)) {
+        score = 40;
+      }
+
+      if (score > 0) {
+        const existing = candidateMap.get(s);
+        if (!existing) {
+          candidateMap.set(s, { route: r, score, count: 1 });
+        } else {
+          existing.count += 1;
+          if (score > existing.score) {
+            existing.score = score;
+            existing.route = r;
+          }
+        }
+      }
+    }
+
+    const sorted = Array.from(candidateMap.values())
+      .sort((a, b) => b.score - a.score || a.route.shortName.length - b.route.shortName.length)
+      .slice(0, limit);
+
+    return sorted.map(({ route, count }) => ({
+      shortName: route.shortName,
+      longName: route.longName,
+      origin: route.startingStop,
+      destination: route.terminalStop,
+      agency: route.agency,
+      directionCount: Math.max(1, count),
+      label: `${route.shortName} (${route.startingStop} ➔ ${route.terminalStop})`,
+    }));
   }
 
   public getAllStops(): TransitStop[] {

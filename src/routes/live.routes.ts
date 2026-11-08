@@ -119,12 +119,18 @@ export async function liveRoutes(fastify: FastifyInstance, _opts: FastifyPluginO
 
     const { routes } = parseResult.data;
     const allBuses: any[] = [];
+    const seenBusIds = new Set<string>();
     const now = Math.floor(Date.now() / 1000);
 
     for (const r of routes) {
       const buses = spatialIndexService.getBusesByRoute(r.toUpperCase().trim());
 
       for (const bus of buses) {
+        if (!bus.id || seenBusIds.has(bus.id)) {
+          continue;
+        }
+        seenBusIds.add(bus.id);
+
         const resolved = resolveDelhiRoute(bus.routeId, bus.id);
         const shortName = resolved.shortName;
         const destination = resolved.destination;

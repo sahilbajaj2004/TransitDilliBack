@@ -77,6 +77,174 @@ export async function busRoutes(fastify: FastifyInstance, _opts: FastifyPluginOp
   });
 
   /**
+   * GET /api/v1/buses/search
+   * Real-time search across ALL live buses operating in Delhi (4,500+ active fleet).
+   * Supports searching by:
+   * - Route line code (e.g. 33, 502, TMS, OMS, 227A, 913, 729, D5507, ML403)
+   * - Vehicle plate / registration (e.g. DL1PD9227, DL1PD, DL51, 9227)
+   * - Destination or Origin terminal (e.g. Bhajanpura, Noida, Anand Vihar, Kashmere Gate)
+   * - Transit agency (DTC, DIMTS, DEVI, DMRC)
+   */
+  fastify.get('/search', async (request: FastifyRequest<{ Querystring: { q?: string; agency?: string; limit?: string } }>, reply: FastifyReply) => {
+    const rawQ = request.query.q;
+    const query = (rawQ || '').trim();
+    if (!query) {
+      return reply.status(200).send({
+        status: 'success',
+        count: 0,
+        directions: [],
+        data: [],
+      });
+    }
+
+    const qLower = query.toLowerCase();
+    const qUpper = query.toUpperCase().replace(/\s+/g, '');
+    const limit = Math.min(Math.max(Number(request.query.limit) || 120, 20), 300);
+    const agencyFilter = request.query.agency?.toUpperCase();
+
+    const allBuses = spatialIndexService.getAllBuses();
+    const now = Math.floor(Date.now() / 1000);
+    const seenBusIds = new Set<string>();
+
+    // Check for directional corridor options if query matches a known route code (e.g. "33", "502")
+    const directions = staticTransitService.getRouteDirections(query);
+
+    // Collect matching vehicles with score for ranking
+    const matches: Array<{ bus: any; score: number }> = [];
+
+    for (let i = 0; i < allBuses.length; i++) {
+      const bus = allBuses[i];
+      if (agencyFilter && agencyFilter !== 'ALL' && bus.agency !== agencyFilter) {
+        continue;
+      }
+      if (seenBusIds.has(bus.id)) {
+        continue;
+      }
+
+      const regUpper = (bus.id || '').toUpperCase();
+      const resolved = resolveDelhiRoute(bus.routeId, bus.id);
+      const shortUpper = (resolved.shortName || '').toUpperCase();
+      const destLower = (resolved.destination || '').toLowerCase();
+      const origLower = (resolved.origin || '').toLowerCase();
+      const descLower = (resolved.desc || '').toLowerCase();
+      const routeId = String(bus.routeId || '');
+
+      let score = 0;
+
+      // 1. Exact registration match (e.g. "DL1PD9227")
+      if (regUpper === qUpper) {
+        score = 100;
+      }
+      // 2. Exact route code match (e.g. "33", "502", "TMS", "227A", "D5507")
+      else if (shortUpper === qUpper || routeId === query) {
+        score = 90;
+      }
+      // 3. Registration prefix (e.g. "DL1PD", "DL51GD")
+      else if (regUpper.startsWith(qUpper)) {
+        score = 80;
+      }
+      // 4. Route code prefix (e.g. "227" matches 227A, "91" matches 913)
+      else if (shortUpper.startsWith(qUpper)) {
+        score = 75;
+      }
+      // 5. Registration 4-digit substring (e.g. "9227", "6939")
+      else if (regUpper.includes(qUpper)) {
+        score = 70;
+      }
+      // 6. Route code substring (e.g. "5507" in "D5507", "403" in "ML403")
+      else if (shortUpper.includes(qUpper)) {
+        score = 65;
+      }
+      // 7. Destination / origin starts with query (e.g. "Bhajanpura", "Noida", "Anand Vihar")
+      else if (destLower.startsWith(qLower) || origLower.startsWith(qLower)) {
+        score = 60;
+      }
+      // 8. Destination / origin contains query
+      else if (destLower.includes(qLower) || origLower.includes(qLower)) {
+        score = 50;
+      }
+      // 9. Route description contains query
+      else if (descLower.includes(qLower)) {
+        score = 40;
+      }
+      // 10. Agency exact match (e.g. "DEVI", "DMRC", "DIMTS", "DTC")
+      else if (bus.agency.toLowerCase() === qLower) {
+        score = 30;
+      }
+
+      if (score > 0) {
+        seenBusIds.add(bus.id);
+        const busAgency = bus.agency;
+        let agencyName = 'DTC State Fleet';
+        if (busAgency === 'DIMTS') agencyName = 'DIMTS Cluster';
+        else if (busAgency === 'DEVI') agencyName = 'DEVI Mohalla Bus';
+        else if (busAgency === 'DMRC') agencyName = 'DMRC Metro Feeder';
+        else if (bus.isElectric) agencyName = 'DTC Electric';
+
+        matches.push({
+          score,
+          bus: {
+            id: bus.id,
+            registration: bus.id,
+            route: resolved.shortName,
+            routeId: bus.routeId,
+            routeShortName: resolved.shortName,
+            routeDesc: resolved.desc,
+            destination: resolved.destination,
+            origin: resolved.origin,
+            agency: busAgency,
+            agencyName,
+            fuelType: bus.fuelType,
+            isElectric: bus.isElectric,
+            isAc: bus.isAc,
+            ac: bus.isAc ? 'ac' : 'nac',
+            themeColor: bus.themeColor,
+            secondaryColor: bus.secondaryColor,
+            lat: bus.lat,
+            lon: bus.lon,
+            speedKmph: bus.speedKmph,
+            bearing: bus.bearing,
+            timestamp: bus.timestamp,
+            freshness: `${Math.max(0, now - bus.timestamp)}s ago`,
+          },
+        });
+      }
+    }
+
+    // Sort by relevance score descending
+    matches.sort((a, b) => b.score - a.score);
+    const finalResults = matches.slice(0, limit).map((m) => m.bus);
+
+    return reply.status(200).send({
+      status: 'success',
+      count: finalResults.length,
+      query,
+      directions,
+      data: finalResults,
+    });
+  });
+
+  /**
+   * GET /api/v1/buses/suggest-routes
+   * Dynamic route prefix and corridor suggestions as commuter types.
+   * e.g. "9" -> 901, 905, 913, 971, 971A; "33" -> 33, 33A, 334; "971" -> 971, 971A.
+   * Includes Origin ➔ Destination and live vehicle counts.
+   */
+  fastify.get('/suggest-routes', async (request: FastifyRequest<{ Querystring: { q?: string; limit?: string } }>, reply: FastifyReply) => {
+    const rawQ = request.query.q;
+    const query = (rawQ || '').trim();
+    const limit = Math.min(Math.max(Number(request.query.limit) || 12, 1), 30);
+    const suggestions = staticTransitService.getRouteSuggestions(query, limit);
+
+    return reply.status(200).send({
+      status: 'success',
+      count: suggestions.length,
+      query,
+      data: suggestions,
+    });
+  });
+
+  /**
    * GET /api/v1/buses/:vehicleId
    * Retrieves real-time GPS telemetry, route details, and computed stop-by-stop ETAs for a vehicle.
    */
