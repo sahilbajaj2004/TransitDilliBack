@@ -42,7 +42,7 @@ export class NormalizerService {
    */
   public static enrich(raw: RawTelemetryVehicle): EnrichedBus {
     const reg = (raw.id || '').toUpperCase().replace(/\s+/g, '');
-    const resolved = resolveDelhiRoute(raw.routeId || '', reg);
+    const resolved = resolveDelhiRoute(raw.routeId || '', reg, raw.latitude, raw.longitude, raw.bearing);
     const shortNameUpper = (resolved.shortName || '').toUpperCase();
 
     // 1. DEVI (Delhi EV Interconnector / Mohalla Buses):

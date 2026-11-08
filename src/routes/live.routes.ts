@@ -56,7 +56,7 @@ export async function liveRoutes(fastify: FastifyInstance, _opts: FastifyPluginO
     const now = Math.floor(Date.now() / 1000);
 
     const formatted = buses.map((bus) => {
-      const resolved = resolveDelhiRoute(bus.routeId, bus.id);
+      const resolved = resolveDelhiRoute(bus.routeId, bus.id, bus.lat, bus.lon, bus.bearing);
       const shortName = resolved.shortName;
       const destination = resolved.destination;
       const origin = resolved.origin;
@@ -131,7 +131,7 @@ export async function liveRoutes(fastify: FastifyInstance, _opts: FastifyPluginO
         }
         seenBusIds.add(bus.id);
 
-        const resolved = resolveDelhiRoute(bus.routeId, bus.id);
+        const resolved = resolveDelhiRoute(bus.routeId, bus.id, bus.lat, bus.lon, bus.bearing);
         const shortName = resolved.shortName;
         const destination = resolved.destination;
         const origin = resolved.origin;
@@ -191,7 +191,7 @@ export async function liveRoutes(fastify: FastifyInstance, _opts: FastifyPluginO
       count: buses.length,
       stats,
       data: buses.slice(0, 150).map((bus) => {
-        const resolved = resolveDelhiRoute(bus.routeId, bus.id);
+        const resolved = resolveDelhiRoute(bus.routeId, bus.id, bus.lat, bus.lon, bus.bearing);
         const busAgency = bus.agency === 'DIMTS' ? 'DIMTS' : resolved.agency;
         return {
           id: bus.id,

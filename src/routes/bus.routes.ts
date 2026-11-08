@@ -122,7 +122,7 @@ export async function busRoutes(fastify: FastifyInstance, _opts: FastifyPluginOp
       }
 
       const regUpper = (bus.id || '').toUpperCase();
-      const resolved = resolveDelhiRoute(bus.routeId, bus.id);
+      const resolved = resolveDelhiRoute(bus.routeId, bus.id, bus.lat, bus.lon, bus.bearing);
       const shortUpper = (resolved.shortName || '').toUpperCase();
       const destLower = (resolved.destination || '').toLowerCase();
       const origLower = (resolved.origin || '').toLowerCase();
@@ -260,7 +260,7 @@ export async function busRoutes(fastify: FastifyInstance, _opts: FastifyPluginOp
       });
     }
 
-    const resolved = resolveDelhiRoute(bus.routeId, bus.id);
+    const resolved = resolveDelhiRoute(bus.routeId, bus.id, bus.lat, bus.lon, bus.bearing);
     const routeInfo = staticTransitService.getRouteById(bus.routeId);
     const etas = routeInfo ? EtaService.calculateRouteEtas(bus, routeInfo.stops) : [];
 

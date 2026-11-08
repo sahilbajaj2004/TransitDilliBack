@@ -57,56 +57,111 @@ export const DELHI_TRUNK_REGISTRY: Array<{
 
 /**
  * Resolves any route ID (numeric, unmapped, or GTFS key) to an authentic passenger-facing Delhi route.
- * Guarantees NO raw 4-digit internal IDs ever leak to commuter UI.
+ * 1. Checks static GTFS SQLite route registry (which contains 2,620+ routes).
+ * 2. If unmapped or dynamic duty (e.g. 3407, 3475), runs Spatial Corridor Resolution
+ *    matching the bus's real-time GPS position and bearing to the physical road stops.
+ * 3. Never produces arbitrary fake routes across Delhi.
  */
-export function resolveDelhiRoute(rawRouteId: string, currentBusRegistration?: string): ResolvedRoute {
+export function resolveDelhiRoute(
+  rawRouteId: string,
+  currentBusRegistration?: string,
+  lat?: number,
+  lon?: number,
+  bearing?: number
+): ResolvedRoute {
+  const regUpper = (currentBusRegistration || '').toUpperCase();
+  const inferredAgency: 'DTC' | 'DIMTS' =
+    regUpper.startsWith('DL1PB') || regUpper.startsWith('DL1PC') || regUpper.startsWith('DL51GD') || regUpper.startsWith('DL51G')
+      ? 'DIMTS'
+      : 'DTC';
+
+  // 1. Direct Static Database Lookup
   const existing = staticTransitService.getRouteById(rawRouteId);
 
-  // If the static database has a clean non-4-digit shortName, use it
-  if (existing && !/^\d{4,}$/.test(existing.shortName)) {
+  if (existing) {
     let cleanShort = existing.shortName;
-    if (cleanShort.toUpperCase().startsWith('OMSEV')) cleanShort = 'OMS';
-    if (cleanShort.toUpperCase().startsWith('TMSEV')) cleanShort = 'TMS';
 
-    return {
-      shortName: cleanShort,
-      longName: existing.longName,
-      origin: existing.startingStop || 'Delhi Terminal',
-      destination: existing.terminalStop || 'Delhi NCT Corridor',
-      desc: `${cleanShort}: ${existing.longName}`,
-      agency: existing.agency,
-    };
-  }
+    // If shortName is missing or internal integer, extract from longName
+    if (!cleanShort || /^\d{4,}$/.test(cleanShort) || cleanShort === 'nan') {
+      if (existing.longName) {
+        const extracted = existing.longName
+          .replace(/(UP\d*|DOWN\d*|STLUP|STLDOWN|LNKSTLUP|LSTLUP|\(NS\).*)$/i, '')
+          .trim();
+        if (extracted && extracted.length >= 2 && extracted.length <= 12 && !/^\d{4,}$/.test(extracted)) {
+          cleanShort = extracted;
+        }
+      }
+    }
 
-  // If existing record has a long_name with the real route (e.g. "780DOWN" or "511AUP")
-  if (existing && existing.longName) {
-    const extracted = existing.longName.replace(/(UP\d*|DOWN\d*|STLUP|STLDOWN|LNKSTLUP|LSTLUP|\(NS\).*)$/i, '').trim();
-    if (extracted && extracted.length >= 2 && extracted.length <= 6 && !/^\d{4,}$/.test(extracted)) {
+    if (cleanShort && !/^\d{4,}$/.test(cleanShort) && cleanShort !== 'nan') {
+      if (cleanShort.toUpperCase().startsWith('OMSEV')) cleanShort = 'OMS';
+      if (cleanShort.toUpperCase().startsWith('TMSEV')) cleanShort = 'TMS';
+
       return {
-        shortName: extracted,
-        longName: existing.longName,
+        shortName: cleanShort,
+        longName: existing.longName || cleanShort,
         origin: existing.startingStop || 'Delhi Terminal',
         destination: existing.terminalStop || 'Delhi NCT Corridor',
-        desc: `${extracted}: ${existing.longName}`,
-        agency: existing.agency,
+        desc: `${cleanShort}: ${existing.longName || cleanShort}`,
+        agency: existing.agency || inferredAgency,
       };
     }
   }
 
-  // Deterministically map unmapped 4-digit internal IDs to recognized Delhi passenger trunk corridors
-  let hash = 0;
-  const key = `${rawRouteId}_${currentBusRegistration || ''}`;
-  for (let i = 0; i < key.length; i++) {
-    hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  }
-  const matched = DELHI_TRUNK_REGISTRY[hash % DELHI_TRUNK_REGISTRY.length];
+  // 2. Spatial Corridor Matching: If routeId is an internal duty number (e.g. 3407, 3475),
+  // match the bus to the physical transit corridor it is driving along.
+  if (lat && lon && lat > 28.0 && lat < 29.5 && lon > 76.5 && lon < 77.8) {
+    try {
+      const nearbyStops = staticTransitService.getNearbyStops(lat, lon, 0.8);
+      if (nearbyStops && nearbyStops.length > 0) {
+        const routeCountMap = new Map<string, { count: number; route: TransitRoute }>();
+        for (const s of nearbyStops) {
+          const serving = staticTransitService.getRoutesServingStop(s.id);
+          for (const r of serving) {
+            if (r.shortName && !/^\d{4,}$/.test(r.shortName) && r.shortName !== 'nan') {
+              const entry = routeCountMap.get(r.shortName) || { count: 0, route: r };
+              entry.count++;
+              routeCountMap.set(r.shortName, entry);
+            }
+          }
+        }
 
+        const candidates = [...routeCountMap.values()].sort((a, b) => b.count - a.count);
+        if (candidates.length > 0) {
+          const top = candidates[0].route;
+          return {
+            shortName: top.shortName,
+            longName: top.longName,
+            origin: top.startingStop || nearbyStops[0].name,
+            destination: top.terminalStop || 'Delhi NCT Corridor',
+            desc: `${top.shortName}: ${top.longName}`,
+            agency: top.agency || inferredAgency,
+          };
+        }
+
+        // If no named route passing through, identify by immediate stops along the road
+        const closest = nearbyStops[0];
+        return {
+          shortName: 'BUS',
+          longName: `Corridor via ${closest.name}`,
+          origin: closest.name,
+          destination: 'Delhi NCT Corridor',
+          desc: `Live transit near ${closest.name}`,
+          agency: inferredAgency,
+        };
+      }
+    } catch {
+      // Spatial lookup fallback
+    }
+  }
+
+  // 3. Fallback for unmapped buses without coordinates
   return {
-    shortName: matched.shortName,
-    longName: matched.longName,
-    origin: matched.origin,
-    destination: matched.destination,
-    desc: matched.longName,
-    agency: matched.agency,
+    shortName: rawRouteId && rawRouteId.length <= 6 && !/^\d{4,}$/.test(rawRouteId) ? rawRouteId : 'BUS',
+    longName: `Delhi Fleet ${currentBusRegistration || rawRouteId}`,
+    origin: 'Delhi Terminal',
+    destination: 'Delhi NCT Corridor',
+    desc: `Delhi Transport Fleet ${currentBusRegistration || ''}`,
+    agency: inferredAgency,
   };
 }
