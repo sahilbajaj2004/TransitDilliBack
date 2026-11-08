@@ -1,6 +1,7 @@
 import KDBush from 'kdbush';
 import { pino } from 'pino';
 import { EnrichedBus } from './normalizer.service';
+import { staticTransitService } from './static-transit.service';
 
 const logger = pino({ name: 'SpatialIndexService' });
 
@@ -51,11 +52,20 @@ export class SpatialIndexService {
       const bus = buses[i];
       this.busMap.set(bus.id, bus);
 
-      // Group by route
+      // Group by route ID and human route short name
       if (bus.routeId) {
         const routeBuses = this.routeBusesMap.get(bus.routeId) || [];
         routeBuses.push(bus);
         this.routeBusesMap.set(bus.routeId, routeBuses);
+
+        // Also index under human short name (e.g. 505, TMS, 729)
+        const staticRoute = staticTransitService.getRouteById(bus.routeId);
+        if (staticRoute && staticRoute.shortName && staticRoute.shortName !== bus.routeId) {
+          const shortKey = staticRoute.shortName.toUpperCase().trim();
+          const shortList = this.routeBusesMap.get(shortKey) || [];
+          shortList.push(bus);
+          this.routeBusesMap.set(shortKey, shortList);
+        }
       }
 
       points.push([bus.lon, bus.lat]);
@@ -145,6 +155,13 @@ export class SpatialIndexService {
    */
   public getBusesByRoute(routeId: string): EnrichedBus[] {
     return this.routeBusesMap.get(routeId) || [];
+  }
+
+  /**
+   * Returns all active buses currently in the spatial index.
+   */
+  public getAllBuses(): EnrichedBus[] {
+    return this.buses;
   }
 
   /**

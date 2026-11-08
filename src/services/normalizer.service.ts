@@ -1,3 +1,6 @@
+import { staticTransitService } from './static-transit.service';
+import { resolveDelhiRoute } from './route-resolver.service';
+
 export type AgencyType = 'DTC' | 'DIMTS';
 export type FuelType = 'electric' | 'cng' | 'diesel';
 
@@ -21,7 +24,7 @@ export interface EnrichedBus {
   bearing: number;
   speedKmph: number;
   agency: AgencyType;
-  themeColor: string; // DTC Emerald Green (#10B981) or DIMTS Royal Blue (#2563EB)
+  themeColor: string; // DTC Royal Blue (#1D4ED8) or DIMTS Cluster Orange (#EA580C)
   secondaryColor: string;
   isAc: boolean;
   fuelType: FuelType;
@@ -32,6 +35,7 @@ export interface EnrichedBus {
 export class NormalizerService {
   /**
    * Enriches raw GTFS-RT vehicle telemetry with agency branding and fleet classification.
+   * Recognizes DTC (Royal Blue), DIMTS Cluster (Orange), and Electric DTC.
    */
   public static enrich(raw: RawTelemetryVehicle): EnrichedBus {
     const reg = (raw.id || '').toUpperCase().replace(/\s+/g, '');
@@ -39,11 +43,21 @@ export class NormalizerService {
     // Electric fleet detection: DL51EV, DL1EV, or containing EV
     const isElectric = reg.includes('EV') || reg.startsWith('DL51EV') || reg.startsWith('DL1EV');
 
-    // DIMTS Cluster concessionaire fleet indicators: DL1PB, DL1PC, or cluster route prefix
-    const isDimts =
+    // DIMTS Cluster concessionaire fleet indicators:
+    // Registration prefix or route agency check
+    let isDimts =
       reg.startsWith('DL1PB') ||
       reg.startsWith('DL1PC') ||
+      reg.startsWith('DL51GD') ||
+      reg.startsWith('DL51G') ||
       (raw.routeId && raw.routeId.toUpperCase().startsWith('D-'));
+
+    if (!isDimts && raw.routeId) {
+      const resolved = resolveDelhiRoute(raw.routeId, reg);
+      if (resolved.agency === 'DIMTS') {
+        isDimts = true;
+      }
+    }
 
     // Air conditioned detection: electric buses are 100% AC; CNG low-floor AC series
     const isAc = isElectric || reg.includes('AC') || reg.startsWith('DL1PD');
@@ -51,11 +65,12 @@ export class NormalizerService {
     const agency: AgencyType = isDimts ? 'DIMTS' : 'DTC';
     const fuelType: FuelType = isElectric ? 'electric' : 'cng';
 
-    // UI Branding Color Tokens:
-    // DTC: Emerald Green (#10B981)
-    // DIMTS: Royal Blue (#2563EB)
-    const themeColor = agency === 'DTC' ? '#10B981' : '#2563EB';
-    const secondaryColor = agency === 'DTC' ? '#059669' : '#1D4ED8';
+    // UI Branding Color Tokens as requested:
+    // DTC: Royal Blue (#1D4ED8)
+    // DIMTS Cluster: Orange (#EA580C)
+    // DTC Electric: Electric Blue (#0284C7)
+    const themeColor = agency === 'DIMTS' ? '#EA580C' : isElectric ? '#0284C7' : '#1D4ED8';
+    const secondaryColor = agency === 'DIMTS' ? '#C2410C' : isElectric ? '#0369A1' : '#1E40AF';
 
     // Convert speed from m/s to km/h, rounded to 1 decimal place
     const speedKmph = raw.speed > 0 ? Math.round(raw.speed * 3.6 * 10) / 10 : 0;

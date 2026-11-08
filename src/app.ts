@@ -7,6 +7,9 @@ import { authRoutes } from './routes/auth.routes';
 import { busRoutes } from './routes/bus.routes';
 import { transitRoutes } from './routes/transit.routes';
 import { bookmarkRoutes } from './routes/bookmark.routes';
+import { liveRoutes } from './routes/live.routes';
+import { pisRoutes } from './routes/pis.routes';
+import { staticRoutes } from './routes/static.routes';
 import { spatialIndexService } from './services/spatial.service';
 import { ingestionService } from './services/ingestion.service';
 import { staticTransitService } from './services/static-transit.service';
@@ -92,6 +95,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(busRoutes, { prefix: '/api/v1/buses' });
   await app.register(transitRoutes, { prefix: '/api/v1/transit' });
   await app.register(bookmarkRoutes, { prefix: '/api/v1/bookmarks' });
+  await app.register(liveRoutes, { prefix: '/api/v1/live' });
+  await app.register(pisRoutes, { prefix: '/api/v1/pis' });
+  await app.register(staticRoutes, { prefix: '/api/v1/static' });
 
   return app;
 }
