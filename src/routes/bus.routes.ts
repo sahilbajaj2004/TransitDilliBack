@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { spatialIndexService } from '../services/spatial.service';
 import { ingestionService } from '../services/ingestion.service';
 import { staticTransitService } from '../services/static-transit.service';
+import { resolveDelhiRoute } from '../services/route-resolver.service';
 import { EtaService } from '../services/eta.service';
 import { vehicleStreamService } from '../services/stream.service';
 
@@ -10,7 +11,7 @@ const NearbyQuerySchema = z.object({
   lat: z.coerce.number().min(-90).max(90, 'Latitude must be between -90 and 90'),
   lon: z.coerce.number().min(-180).max(180, 'Longitude must be between -180 and 180'),
   radius: z.coerce.number().min(0.1).max(50.0, 'Radius must be between 0.1 and 50 km').default(10.0),
-  agency: z.enum(['DTC', 'DIMTS']).optional(),
+  agency: z.enum(['DTC', 'DIMTS', 'DEVI', 'DMRC']).optional(),
   electric: z
     .enum(['true', 'false'])
     .optional()
@@ -91,6 +92,7 @@ export async function busRoutes(fastify: FastifyInstance, _opts: FastifyPluginOp
       });
     }
 
+    const resolved = resolveDelhiRoute(bus.routeId, bus.id);
     const routeInfo = staticTransitService.getRouteById(bus.routeId);
     const etas = routeInfo ? EtaService.calculateRouteEtas(bus, routeInfo.stops) : [];
 
@@ -98,13 +100,17 @@ export async function busRoutes(fastify: FastifyInstance, _opts: FastifyPluginOp
       status: 'success',
       data: {
         ...bus,
-        routeDetails: routeInfo
-          ? {
-              shortName: routeInfo.shortName,
-              longName: routeInfo.longName,
-              totalStops: routeInfo.stops.length,
-            }
-          : null,
+        routeShortName: resolved.shortName,
+        origin: resolved.origin,
+        destination: resolved.destination,
+        routeDesc: resolved.desc,
+        agency: bus.agency,
+        themeColor: bus.themeColor,
+        routeDetails: {
+          shortName: resolved.shortName,
+          longName: resolved.longName,
+          totalStops: routeInfo ? routeInfo.stops.length : 0,
+        },
         etas,
       },
     });

@@ -13,7 +13,7 @@ export interface NearbyBusResult extends EnrichedBus {
 }
 
 export interface SpatialQueryOptions {
-  agency?: 'DTC' | 'DIMTS';
+  agency?: 'DTC' | 'DIMTS' | 'DEVI' | 'DMRC';
   isElectric?: boolean;
   isAc?: boolean;
   limit?: number;
@@ -23,6 +23,8 @@ export interface FleetStats {
   totalBuses: number;
   dtcBuses: number;
   dimtsBuses: number;
+  deviBuses: number;
+  dmrcBuses: number;
   electricBuses: number;
   acBuses: number;
   lastUpdated: number;
@@ -170,12 +172,16 @@ export class SpatialIndexService {
   public getFleetStats(): FleetStats {
     let dtcBuses = 0;
     let dimtsBuses = 0;
+    let deviBuses = 0;
+    let dmrcBuses = 0;
     let electricBuses = 0;
     let acBuses = 0;
 
     for (const bus of this.buses) {
       if (bus.agency === 'DTC') dtcBuses++;
       if (bus.agency === 'DIMTS') dimtsBuses++;
+      if (bus.agency === 'DEVI') deviBuses++;
+      if (bus.agency === 'DMRC') dmrcBuses++;
       if (bus.isElectric) electricBuses++;
       if (bus.isAc) acBuses++;
     }
@@ -184,6 +190,8 @@ export class SpatialIndexService {
       totalBuses: this.buses.length,
       dtcBuses,
       dimtsBuses,
+      deviBuses,
+      dmrcBuses,
       electricBuses,
       acBuses,
       lastUpdated: this.lastRebuiltAt,

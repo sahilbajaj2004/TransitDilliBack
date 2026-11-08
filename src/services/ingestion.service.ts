@@ -4,6 +4,7 @@ import { pino } from 'pino';
 import { NormalizerService, RawTelemetryVehicle } from './normalizer.service';
 import { spatialIndexService } from './spatial.service';
 import { vehicleStreamService } from './stream.service';
+import { staticTransitService } from './static-transit.service';
 
 const logger = pino({ name: 'IngestionService' });
 
@@ -17,6 +18,7 @@ export class IngestionService {
   private isCircuitOpen: boolean = false;
   private lastSuccessfulFetch: Date | null = null;
   private lastEntityCount: number = 0;
+  private vehicleHistory = new Map<string, { lat: number; lon: number; bearing: number }>();
 
   constructor() {
     const otdKey = process.env.OTD_API_KEY;
@@ -85,6 +87,11 @@ export class IngestionService {
       }
 
       const response = await this.client.get(this.endpoint);
+      if (!response.data || (response.data as ArrayBuffer).byteLength === 0) {
+        logger.warn('OTD Delhi returned 0 bytes payload. Retaining existing active fleet in memory.');
+        return this.lastEntityCount;
+      }
+
       const buffer = new Uint8Array(response.data);
       const feed = transit_realtime.FeedMessage.decode(buffer);
 
@@ -108,16 +115,49 @@ export class IngestionService {
         const tripId = v.trip?.tripId || '';
         const routeId = v.trip?.routeId || '';
 
+        let effectiveBearing = Number(pos.bearing) || 0;
+
+        // If OTD feed did not provide a valid compass bearing (which is true for 99% of Delhi buses)
+        if (effectiveBearing <= 0 || effectiveBearing > 360) {
+          const prev = this.vehicleHistory.get(vehicleId);
+          if (prev) {
+            const dLat = (lat - prev.lat) * 111320;
+            const dLon = (lon - prev.lon) * 111320 * Math.cos((lat * Math.PI) / 180);
+            const distMeters = Math.hypot(dLat, dLon);
+
+            // If bus moved at least 3 meters between OTD polling cycles:
+            if (distMeters >= 3.0) {
+              effectiveBearing = staticTransitService.calculateBearing(prev.lat, prev.lon, lat, lon);
+            } else if (prev.bearing > 0) {
+              // Stationary (at stop or red light): preserve last travel heading!
+              effectiveBearing = prev.bearing;
+            }
+          }
+        }
+
+        // If still 0 (first seen or stationary since app start): estimate from route corridor stops
+        if (effectiveBearing === 0) {
+          effectiveBearing = staticTransitService.estimateCorridorBearing(routeId || tripId, lat, lon);
+        }
+
+        // Save position history
+        this.vehicleHistory.set(vehicleId, { lat, lon, bearing: effectiveBearing });
+
         rawVehicles.push({
           id: vehicleId,
           tripId,
           routeId,
           latitude: lat,
           longitude: lon,
-          bearing: pos.bearing || 0,
+          bearing: effectiveBearing,
           speed: pos.speed || 0,
           timestamp: Number(v.timestamp) || Math.floor(Date.now() / 1000),
         });
+      }
+
+      if (rawVehicles.length === 0) {
+        logger.warn('OTD Delhi feed contained 0 valid vehicle entities. Retaining existing fleet.');
+        return this.lastEntityCount;
       }
 
       // Normalize all vehicles with UI tokens & agency classification

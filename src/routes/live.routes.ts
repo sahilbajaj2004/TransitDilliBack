@@ -11,7 +11,7 @@ const NearbyBusesBodySchema = z.object({
   lon: z.number().min(-180).max(180, 'Longitude must be between -180 and 180'),
   radiusKm: z.number().min(0.1).max(50.0).default(10.0),
   limit: z.number().int().min(1).max(300).default(60),
-  agency: z.enum(['DTC', 'DIMTS']).optional(),
+  agency: z.enum(['DTC', 'DIMTS', 'DEVI', 'DMRC']).optional(),
   electric: z.boolean().optional(),
   ac: z.boolean().optional(),
 });
@@ -60,7 +60,12 @@ export async function liveRoutes(fastify: FastifyInstance, _opts: FastifyPluginO
       const shortName = resolved.shortName;
       const destination = resolved.destination;
       const origin = resolved.origin;
-      const busAgency = bus.agency === 'DIMTS' ? 'DIMTS' : resolved.agency;
+      const busAgency = bus.agency;
+      let agencyName = 'DTC State Fleet';
+      if (busAgency === 'DIMTS') agencyName = 'DIMTS Cluster';
+      else if (busAgency === 'DEVI') agencyName = 'DEVI Mohalla Bus';
+      else if (busAgency === 'DMRC') agencyName = 'DMRC Metro Feeder';
+      else if (bus.isElectric) agencyName = 'DTC Electric';
 
       return {
         id: bus.id,
@@ -71,13 +76,13 @@ export async function liveRoutes(fastify: FastifyInstance, _opts: FastifyPluginO
         destination,
         origin,
         agency: busAgency,
-        agencyName: busAgency === 'DIMTS' ? 'DIMTS Cluster' : bus.isElectric ? 'DTC Electric' : 'DTC State Fleet',
+        agencyName,
         fuelType: bus.fuelType,
         isElectric: bus.isElectric,
         isAc: bus.isAc,
         ac: bus.isAc ? 'ac' : 'nac',
-        themeColor: busAgency === 'DIMTS' ? '#EA580C' : bus.isElectric ? '#0284C7' : '#1D4ED8',
-        secondaryColor: busAgency === 'DIMTS' ? '#C2410C' : bus.isElectric ? '#0369A1' : '#1E40AF',
+        themeColor: bus.themeColor,
+        secondaryColor: bus.secondaryColor,
         lat: bus.lat,
         lon: bus.lon,
         speedKmph: bus.speedKmph,
@@ -124,7 +129,12 @@ export async function liveRoutes(fastify: FastifyInstance, _opts: FastifyPluginO
         const shortName = resolved.shortName;
         const destination = resolved.destination;
         const origin = resolved.origin;
-        const busAgency = bus.agency === 'DIMTS' ? 'DIMTS' : resolved.agency;
+        const busAgency = bus.agency;
+        let agencyName = 'DTC State Fleet';
+        if (busAgency === 'DIMTS') agencyName = 'DIMTS Cluster';
+        else if (busAgency === 'DEVI') agencyName = 'DEVI Mohalla Bus';
+        else if (busAgency === 'DMRC') agencyName = 'DMRC Metro Feeder';
+        else if (bus.isElectric) agencyName = 'DTC Electric';
 
         allBuses.push({
           id: bus.id,
@@ -135,13 +145,13 @@ export async function liveRoutes(fastify: FastifyInstance, _opts: FastifyPluginO
           destination,
           origin,
           agency: busAgency,
-          agencyName: busAgency === 'DIMTS' ? 'DIMTS Cluster' : bus.isElectric ? 'DTC Electric' : 'DTC State Fleet',
+          agencyName,
           fuelType: bus.fuelType,
           isElectric: bus.isElectric,
           isAc: bus.isAc,
           ac: bus.isAc ? 'ac' : 'nac',
-          themeColor: busAgency === 'DIMTS' ? '#EA580C' : bus.isElectric ? '#0284C7' : '#1D4ED8',
-          secondaryColor: busAgency === 'DIMTS' ? '#C2410C' : bus.isElectric ? '#0369A1' : '#1E40AF',
+          themeColor: bus.themeColor,
+          secondaryColor: bus.secondaryColor,
           lat: bus.lat,
           lon: bus.lon,
           speedKmph: bus.speedKmph,

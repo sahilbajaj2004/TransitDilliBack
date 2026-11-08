@@ -1,4 +1,4 @@
-import { EnrichedBus } from './normalizer.service';
+import { EnrichedBus, AgencyType } from './normalizer.service';
 import { RouteStopDetail, staticTransitService } from './static-transit.service';
 import { spatialIndexService } from './spatial.service';
 
@@ -20,7 +20,7 @@ export interface IncomingBusArrival {
   routeId: string;
   routeShortName: string;
   destination: string;
-  agency: 'DTC' | 'DIMTS';
+  agency: AgencyType;
   themeColor: string;
   secondaryColor: string;
   isElectric: boolean;

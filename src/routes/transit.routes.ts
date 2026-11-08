@@ -43,6 +43,30 @@ export async function transitRoutes(fastify: FastifyInstance, _opts: FastifyPlug
   });
 
   /**
+   * GET /api/v1/transit/route-directions/:routeCode
+   * Returns bidirectional travel options (e.g. Bhajanpura -> Noida vs. Noida -> Bhajanpura) for Route 33.
+   */
+  fastify.get('/route-directions/:routeCode', async (request: FastifyRequest<{ Params: { routeCode: string } }>, reply: FastifyReply) => {
+    const { routeCode } = request.params;
+    const directions = staticTransitService.getRouteDirections(routeCode);
+
+    const annotated = directions.map((d) => {
+      const activeBuses = spatialIndexService.getBusesByRoute(d.routeId);
+      return {
+        ...d,
+        activeBusesCount: activeBuses.length,
+      };
+    });
+
+    return reply.status(200).send({
+      status: 'success',
+      routeCode,
+      count: annotated.length,
+      directions: annotated,
+    });
+  });
+
+  /**
    * GET /api/v1/routes/:routeId
    * Detailed route information: full ordered stop sequence and real-time active buses on that line.
    */

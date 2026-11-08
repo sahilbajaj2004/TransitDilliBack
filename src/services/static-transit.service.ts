@@ -32,6 +32,7 @@ export interface TransitRoute {
   startingStop: string;
   terminalStop: string;
   agency: 'DTC' | 'DIMTS';
+  direction?: number;
   isAc: boolean;
   isElectric: boolean;
   polyline: string | null;
@@ -154,7 +155,7 @@ export class StaticTransitService {
     // 5. Load Routes
     const routeRows = db
       .prepare(
-        'SELECT route_id, agency, long_name, short_name, starting_stop, terminal_stop, display_name FROM Routes'
+        'SELECT route_id, agency, long_name, short_name, starting_stop, terminal_stop, display_name, direction FROM Routes'
       )
       .all() as {
       route_id: number;
@@ -164,6 +165,7 @@ export class StaticTransitService {
       starting_stop: string;
       terminal_stop: string;
       display_name: string;
+      direction: number;
     }[];
 
     this.routeMap.clear();
@@ -220,6 +222,7 @@ export class StaticTransitService {
         startingStop: r.starting_stop || '',
         terminalStop: r.terminal_stop || '',
         agency,
+        direction: r.direction,
         isAc: true,
         isElectric,
         polyline: detail?.geometry || null,
@@ -333,6 +336,79 @@ export class StaticTransitService {
     return this.routeMap.get(key) || this.routeMap.get(key.toUpperCase());
   }
 
+  /**
+   * Geodesic bearing calculation between two lat/lon coordinates (in degrees 0-360)
+   */
+  public calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const toRad = Math.PI / 180;
+    const toDeg = 180 / Math.PI;
+    const phi1 = lat1 * toRad;
+    const phi2 = lat2 * toRad;
+    const deltaLambda = (lon2 - lon1) * toRad;
+
+    const y = Math.sin(deltaLambda) * Math.cos(phi2);
+    const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda);
+
+    let b = Math.atan2(y, x) * toDeg;
+    return (Math.round(b) + 360) % 360;
+  }
+
+  /**
+   * Estimates the corridor travel heading (bearing) for a bus at (lat, lon) on a given route.
+   * Finds the closest sequential stop pair along the route to determine the exact street vector.
+   */
+  public estimateCorridorBearing(routeKey: string, lat: number, lon: number): number {
+    if (!lat || !lon) return 0;
+
+    let route = this.getRouteById(routeKey);
+    if (!route && routeKey) {
+      const clean = routeKey.replace(/(UP\d*|DOWN\d*|STLUP|STLDOWN|\(NS\).*)$/i, '').trim().toUpperCase();
+      route = this.getRouteById(clean);
+    }
+
+    if (route && route.stops && route.stops.length >= 2) {
+      const stops = route.stops;
+      let closestIdx = 0;
+      let minDistanceSq = Infinity;
+
+      for (let i = 0; i < stops.length; i++) {
+        const dLat = stops[i].lat - lat;
+        const dLon = stops[i].lon - lon;
+        const distSq = dLat * dLat + dLon * dLon;
+        if (distSq < minDistanceSq) {
+          minDistanceSq = distSq;
+          closestIdx = i;
+        }
+      }
+
+      // Forward vector along route direction:
+      let p1 = stops[closestIdx];
+      let p2 = closestIdx < stops.length - 1 ? stops[closestIdx + 1] : stops[closestIdx];
+      if (closestIdx === stops.length - 1 && closestIdx > 0) {
+        p1 = stops[closestIdx - 1];
+        p2 = stops[closestIdx];
+      }
+
+      const b = this.calculateBearing(p1.lat, p1.lon, p2.lat, p2.lon);
+      if (b > 0) return b;
+    }
+
+    // Fallback: Check nearby transit network stops in Delhi to find the road orientation!
+    if (this.stopSpatialIndex) {
+      const nearbyStopIndices = this.stopSpatialIndex.within(lon, lat, 0.006); // ~600m
+      if (nearbyStopIndices.length >= 2) {
+        const s1 = this.stopsList[nearbyStopIndices[0]];
+        const s2 = this.stopsList[nearbyStopIndices[1]];
+        if (s1 && s2) {
+          const b = this.calculateBearing(s1.lat, s1.lon, s2.lat, s2.lon);
+          if (b > 0) return b;
+        }
+      }
+    }
+
+    return 0;
+  }
+
   public searchRoutes(query: string): TransitRoute[] {
     const q = query.trim().toUpperCase();
     if (!q) return this.getAllRoutes();
@@ -346,6 +422,74 @@ export class StaticTransitService {
         r.terminalStop.toUpperCase().includes(q) ||
         r.startingStop.toUpperCase().includes(q)
     );
+  }
+
+  /**
+   * Retrieves both directional corridors for a given route (e.g. for Route 33: Bhajanpura -> Noida vs Noida -> Bhajanpura).
+   */
+  public getRouteDirections(routeCode: string): Array<{
+    routeId: string;
+    direction: number;
+    agency: string;
+    longName: string;
+    origin: string;
+    destination: string;
+    label: string;
+    stopsCount: number;
+  }> {
+    const clean = routeCode.trim().toUpperCase();
+    const matches: TransitRoute[] = [];
+
+    for (const r of this.uniqueRoutes) {
+      const sName = r.shortName.toUpperCase().trim();
+      const lName = r.longName.toUpperCase().trim();
+      if (
+        sName === clean ||
+        lName === clean ||
+        lName.startsWith(`${clean}UP`) ||
+        lName.startsWith(`${clean}DOWN`) ||
+        lName.startsWith(`${clean} `) ||
+        lName.startsWith(`${clean}STL`)
+      ) {
+        matches.push(r);
+      }
+    }
+
+    // Sort: direction 1 (UP) first, then direction 0 (DOWN)
+    matches.sort((a, b) => (b.direction ?? 0) - (a.direction ?? 0));
+
+    const seen = new Set<string>();
+    const results: Array<{
+      routeId: string;
+      direction: number;
+      agency: string;
+      longName: string;
+      origin: string;
+      destination: string;
+      label: string;
+      stopsCount: number;
+    }> = [];
+
+    for (const m of matches) {
+      const orig = m.startingStop || 'Delhi Terminal';
+      const dest = m.terminalStop || 'Destination';
+      const key = `${orig}->${dest}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      results.push({
+        routeId: m.id,
+        direction: m.direction ?? 1,
+        agency: m.agency,
+        longName: m.longName,
+        origin: orig,
+        destination: dest,
+        label: `${orig} ➔ ${dest}`,
+        stopsCount: m.stops.length,
+      });
+    }
+
+    return results;
   }
 
   public getAllStops(): TransitStop[] {
